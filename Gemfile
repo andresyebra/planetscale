@@ -29,6 +29,9 @@ gem "jbuilder"
 # Use Redis adapter to run Action Cable in production
 gem "redis", ">= 4.0.1"
 
+# Use mysql2 as the database for Active Record
+gem "mysql2", "~> 0.5.6"
+
 # Use Kredis to get higher-level data types in Redis [https://github.com/rails/kredis]
 # gem "kredis"
 
@@ -49,6 +52,9 @@ group :development, :test do
   gem "debug", platforms: %i[ mri windows ]
 end
 
+group  :development, :test do
+  gem "dotenv-rails"
+end
 group :development do
   # Use console on exceptions pages [https://github.com/rails/web-console]
   gem "web-console"

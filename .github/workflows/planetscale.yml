@@ -1,0 +1,93 @@
+name: PlanetScale
+
+env:
+  pscale_base_directory: .pscale
+
+on:
+  pull_request:
+    branches: [main]
+    types: [synchronize, opened]
+    paths:
+      - "db/migrate/*.rb"
+      - "db/schema.rb"
+
+jobs:
+  promote_database_branch:
+    name: Promote database branch
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == false
+    steps:
+      - name: Extract branch name
+        shell: bash
+        run: echo "##[set-output name=branch;]${GITHUB_REF#refs/heads/}"
+        id: extract_branch
+      - name: Validate parameters
+        id: validate_params
+        uses: actions/github-script@v3
+        env:
+          BRANCH_NAME: ${{ github.head_ref }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const branch_name = process.env.BRANCH_NAME || "${{steps.extract_branch.outputs.branch}}";
+
+            const regex = /[^\/]+$/;
+            let clean_branch_name;
+
+            if (branch_name.match(regex)) {
+              clean_branch_name = branch_name.match(regex)[0];
+            } else {
+              clean_branch_name = branch_name;
+            }
+
+            if (! /^[a-zA-Z0-9_-]+$/.test(clean_branch_name)) {
+              const error = `The branch name contains illegal characters: ${clean_branch_name}`;
+              core.error(error);
+              core.setFailed(error);
+            }
+            core.setOutput('branch_name', clean_branch_name);
+
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Create database branch - if asked, please click on displayed link to authenticate
+        id: create-db-branch
+        timeout-minutes: 3
+        env:
+          ACTIONS_ALLOW_UNSECURE_COMMANDS: true
+          PLANETSCALE_RECREATE_BRANCH: true
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{secrets.PLANETSCALE_SERVICE_TOKEN_ID}}
+          PLANETSCALE_SERVICE_TOKEN: ${{secrets.PLANETSCALE_SERVICE_TOKEN}}
+          ORG_NAME: ${{secrets.ORG_NAME}}
+          DB_NAME: ${{secrets.DB_NAME}}
+          BRANCH_NAME: ${{ steps.validate_params.outputs.branch_name }}
+        working-directory: ${{env.pscale_base_directory}}/cli-helper-scripts/
+        run: |
+          ./create-branch.sh "$BRANCH_NAME"
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ruby-3.2.0
+          bundler-cache: true
+      - name: Run pending migrations
+        env:
+          RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
+          SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}
+          RAILS_ENV: staging
+          DATABASE_HOST: ${{ env.DATABASE_HOST }}
+          DATABASE_NAME: ${{ secrets.DB_NAME }}
+          DATABASE_USERNAME: ${{ env.DATABASE_USERNAME }}
+          DATABASE_PASSWORD: ${{ env.DATABASE_PASSWORD }}
+          DATABASE_SSL_CERTIFICATE: "/etc/ssl/certs/ca-certificates.crt"
+        run: |
+          bin/rails db:migrate RAILS_ENV=$RAILS_ENV 
+
+      - name: Create PlanetScale deploy pull request
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{secrets.PLANETSCALE_SERVICE_TOKEN_ID}}
+          PLANETSCALE_SERVICE_TOKEN: ${{secrets.PLANETSCALE_SERVICE_TOKEN}}
+          ORG_NAME: ${{secrets.ORG_NAME}}
+          DB_NAME: ${{secrets.DB_NAME}}
+          BRANCH_NAME: ${{ steps.validate_params.outputs.branch_name }}
+        working-directory: ${{env.pscale_base_directory}}/cli-helper-scripts/
+        run: |
+          ./create-deploy-request.sh "$BRANCH_NAME"

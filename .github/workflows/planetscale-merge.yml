@@ -1,0 +1,64 @@
+name: PlanetScale deployment
+
+env:
+  pscale_base_directory: .pscale
+
+on:
+  pull_request_target:
+    paths:
+      - 'db/**.rb'
+    types:
+      - closed
+
+jobs:
+  deploy_database_branch:
+    name: Deploy database branch
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    steps:
+      - name: Extract branch name
+        shell: bash
+        run: echo "##[set-output name=branch;]${GITHUB_REF#refs/heads/}"
+        id: extract_branch
+
+      - name: Validate parameters
+        id: validate_params
+        uses: actions/github-script@v3
+        env:
+          BRANCH_NAME: ${{ github.head_ref }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const branch_name = process.env.BRANCH_NAME || "${{steps.extract_branch.outputs.branch}}";
+
+            const regex = /[^\/]+$/;
+            let clean_branch_name;
+
+            if (branch_name.match(regex)) {
+              clean_branch_name = branch_name.match(regex)[0];
+            } else {
+              clean_branch_name = branch_name;
+            }
+
+            if (! /^[a-zA-Z0-9_-]+$/.test(clean_branch_name)) {
+              const error = `The branch name contains illegal characters: ${clean_branch_name}`;
+              core.error(error);
+              core.setFailed(error);
+            }
+            core.setOutput('branch_name', clean_branch_name);
+
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Deploy database branch
+        timeout-minutes: 3
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{secrets.PLANETSCALE_SERVICE_TOKEN_ID}}
+          PLANETSCALE_SERVICE_TOKEN: ${{secrets.PLANETSCALE_SERVICE_TOKEN}}
+          ORG_NAME: ${{secrets.ORG_NAME}}
+          DB_NAME: ${{secrets.DB_NAME}}
+          BRANCH_NAME: ${{ steps.validate_params.outputs.branch_name }}
+        working-directory: ${{env.pscale_base_directory}}/cli-helper-scripts/
+        run: |
+          echo $BRANCH_NAME
+          ./merge-latest-open-deploy-request.sh
